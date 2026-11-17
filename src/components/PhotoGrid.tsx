@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
 import type { StoredPhoto } from "../lib/db";
+import type { Quality } from "../lib/protocol";
+
+const QUALITY_COLOR: Record<Quality | "pending", string> = {
+  ok: "text-emerald-300",
+  small: "text-volt",
+  skewed: "text-volt",
+  missing: "text-red-300",
+  error: "text-red-300",
+  pending: "text-mist animate-pulse",
+};
 
 function formatSize(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`;
@@ -14,11 +24,28 @@ function Thumb({ photo, onDelete }: { photo: StoredPhoto; onDelete: (photo: Stor
     return () => URL.revokeObjectURL(objectUrl);
   }, [photo.blob]);
 
+  const quality = photo.analysis?.quality;
+  const canMeasure = (photo.analysis?.markers.length ?? 0) > 0;
+  const dimCount = photo.dims?.length ?? 0;
+
   return (
-    <li className="overflow-hidden rounded-2xl bg-navy-light" data-testid="photo">
-      <div className="aspect-[4/3] bg-navy-dark">
+    <li className="overflow-hidden rounded-2xl bg-navy-light" data-testid="photo" data-quality={quality ?? "pending"}>
+      <a
+        href={canMeasure ? `#/foto/${photo.id}` : undefined}
+        aria-disabled={!canMeasure}
+        className={`relative block aspect-[4/3] bg-navy-dark ${canMeasure ? "cursor-pointer" : "cursor-default"}`}
+        aria-label={canMeasure ? `Měřit na fotce ${photo.name}` : undefined}
+      >
         {url && <img src={url} alt={`Fotka ${photo.name}`} className="size-full object-cover" />}
-      </div>
+        {canMeasure && (
+          <span className="absolute right-2 bottom-2 rounded-lg bg-volt px-3 py-1 text-sm font-bold text-navy shadow">
+            {dimCount > 0 ? `Kóty (${dimCount})` : "Měřit"}
+          </span>
+        )}
+      </a>
+      <p className={`px-3 pt-2 text-sm font-semibold ${QUALITY_COLOR[quality ?? "pending"]}`} data-testid="photo-quality">
+        {photo.analysis?.message ?? "Hledám terč…"}
+      </p>
       <div className="flex items-start justify-between gap-2 p-3">
         <div className="min-w-0 text-sm">
           <p className="truncate font-semibold" title={photo.name}>

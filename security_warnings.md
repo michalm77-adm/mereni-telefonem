@@ -8,4 +8,5 @@ Known risks. Keep updated with every new feature.
 - **PC id survives reloads (localStorage).** A link shared by mistake stays valid until the id changes. Add a "new QR code" button if needed.
 - **Production signalling uses the public PeerJS cloud server.** It sees only peer ids and connection metadata, never photos (those go directly over WebRTC, encrypted with DTLS). Self-host the server if this becomes a concern.
 - **Incoming data from the phone must be validated.** Every message is type-checked (`src/lib/protocol.ts`); photo uploads (F02) must also check file type and size limits.
+- **Vendored detection library** (`public/aruco/`, js-aruco2 2.0.0, MIT). Not updated by npm; check upstream for fixes now and then. It only processes images locally in a worker.
 - **Dev server is reachable by everyone on the local network** (port 5173, `allowedHosts: true`). Dev only, never expose to the internet.

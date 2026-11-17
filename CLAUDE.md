@@ -62,8 +62,9 @@
 | --- | --- | --- | --- |
 | T01 | PC zobrazí QR kód | Načtu QR telefonem | V mobilu se otevře stránka pro odeslání fotek |
 | T02 | Nafotit, vybrat z galerie, odeslat do PC | Kontroluji výstup na monitoru | Zobrazení se všemi možnými kótami |
-| T03 | Kontrola odeslaných fotek | Potvrdím odeslání | Dostanu potvrzení o přijetí |
+| T03 | Kontrola odeslaných fotek | Potvrdím odeslání | Dostanu potvrzení o přijetí + u každé fotky, zda je použitelná (terč nalezen / malý / z boku / chybí) |
 | T04 | Tisk terčů A4 | Vytisknu terč(e) | Každý terč na vlastní A4, černý čtverec 180 mm, kód podle ArUco |
+| T05 | Kóty na fotce | Kliknu 2 body na fotce s terčem | Rozměr v mm (test: chyba < 2 mm na 100 mm i z perspektivy) |
 
 Závěrečný checklist před spuštěním:
 - [ ] T01, T02, T03
@@ -118,12 +119,14 @@ mereni-telefonem/
 ├── public/              # favicon a statické soubory
 ├── security_warnings.md # známá bezpečnostní rizika
 └── src/
-    ├── App.tsx          # hash router: "#/" = PC, "#/send?pc=<id>" = telefon, "#/terce" = tisk terčů
-    ├── pages/           # DeskPage (PC, QR kód), SendPage (telefon, tlačítko +), TargetsPage (terče A4)
+    ├── App.tsx          # hash router: "#/" = PC, "#/send?pc=<id>" = telefon, "#/terce" = tisk terčů, "#/foto/<id>" = měření
+    ├── pages/           # DeskPage (PC, QR kód), SendPage (telefon, tlačítko +), TargetsPage (terče A4), MeasurePage (kóty)
     ├── components/      # Header, QrCode, StatusBadge, PhotoGrid, ConfirmDialog (každé mazání), TargetSheet (SVG A4 v mm)
     └── lib/             # links (adresa QR), peer (PeerJS), protocol (zprávy + validace), transfer (posílání po kouscích),
                          # image (kontrola/převod fotek), db (Dexie: fotky v IndexedDB), storage,
-                         # markers + aruco-dictionary (geometrie terče, kódy ARUCO_MIP_36h12)
+                         # markers + aruco-dictionary (geometrie terče, kódy ARUCO_MIP_36h12),
+                         # detect (Web Worker), analysis (hodnocení fotky, homografie), homography (výpočet)
+public/aruco/            # js-aruco2 2.0.0 (MIT, beze změn) + worker.js – rozpoznání terčů ve vlákně
 ```
 
 ## Příkazy (vše v Dockeru)
@@ -141,6 +144,9 @@ mereni-telefonem/
 - Nový telefon musí uživatel na PC „Povolit“; povolené telefony (trvalé `deviceId` telefonu) si PC pamatuje v localStorage. Fotky od nepovoleného telefonu PC zahodí.
 - Fotky: kousky po 16 kB s řízením toku, PC po přijetí ověří skutečný typ (první bajty) a že jde obrázek otevřít, pak pošle `photo-ack`. Limit 30 MB. Velké fotky / HEIC telefon převede na JPEG (max 4096 px); malé JPG/PNG/WebP jdou beze změny (zachová EXIF).
 - Terč: A4 na výšku, černý čtverec 180 mm = 8 polí po 22,5 mm (6×6 datových + černý okraj), levý horní roh 15 mm / 26 mm od rohu listu, rysky na středech stran. Číslo terče = ArUco ID (1–249, 0 nepoužíváme). Rozměry jsou v `src/lib/markers.ts` (`TARGET`) — rozpoznávání na nich závisí, neměnit bez důvodu.
+- Rozpoznání: PC po přijetí fotky hledá terč ve Web Workeru (zmenšení na 2400 a pak 1200 px), výsledek (`analysis`) uloží k fotce a pošle telefonu zprávu `photo-quality`. Hodnocení: `ok` / `small` (strana < 120 px) / `skewed` (poměr protilehlých hran < 0,6) / `missing` / `error`. Při změně algoritmu zvyš `ANALYSIS_VERSION` → staré fotky se přepočítají.
+- Měření: homografie z rohů největšího terče na fotce (fotka px → mm na rovině terče). Platí jen pro body ve stejné rovině jako terč. Kóty (`dims`) se ukládají k fotce v px fotky, mm se vždy dopočítají. Víc terčů na jedné fotce zatím nekombinujeme (neznáme jejich vzájemnou polohu).
+- E2E testy si vyrábí syntetické fotky terče se skutečnou perspektivou (`makeTargetPhoto` v `e2e/helpers.ts`).
 - Bez StrictMode (dvojí připojení by v dev obsadilo stejné PeerJS ID).
 - Když se IP adresa PC ve Wi-Fi změní, uprav `VITE_LAN_URL` v `.env.local`.
 

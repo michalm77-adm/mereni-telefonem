@@ -4,7 +4,7 @@ import { Header } from "../components/Header";
 import { StatusBadge } from "../components/StatusBadge";
 import { ImageError, preparePhoto } from "../lib/image";
 import { PHONE_ID_PREFIX, peerOptions, randomId } from "../lib/peer";
-import { isPcMessage, PING_INTERVAL_MS, type PcMessage, type PhoneMessage } from "../lib/protocol";
+import { isPcMessage, PING_INTERVAL_MS, type PcMessage, type PhoneMessage, type Quality } from "../lib/protocol";
 import { readStored, writeStored } from "../lib/storage";
 import { sendPhoto } from "../lib/transfer";
 
@@ -14,7 +14,7 @@ const DEVICE_ID_KEY = "2m-mereni:device-id";
 
 type Status = "connecting" | "waiting" | "connected" | "rejected" | "not-found" | "lost" | "error";
 type ItemState = "queued" | "preparing" | "sending" | "checking" | "done" | "failed";
-type Item = { id: string; file: File; state: ItemState; progress: number; error?: string };
+type Item = { id: string; file: File; state: ItemState; progress: number; error?: string; quality?: Quality; qualityText?: string };
 type Ack = Extract<PcMessage, { type: "photo-ack" }>;
 
 /** Stable id of this phone, so the PC remembers it was approved. */
@@ -116,6 +116,10 @@ export function SendPage({ pcId }: { pcId: string | null }) {
           acks.current.get(data.id)?.(data);
           return;
         }
+        if (data.type === "photo-quality") {
+          patch(data.id, { quality: data.quality, qualityText: data.message });
+          return;
+        }
         answered = true;
         window.clearTimeout(timeout);
         if (data.type === "waiting") setStatus("waiting");
@@ -144,7 +148,7 @@ export function SendPage({ pcId }: { pcId: string | null }) {
       connRef.current = null;
       peer.destroy();
     };
-  }, [pcId, attempt, processQueue]);
+  }, [pcId, attempt, processQueue, patch]);
 
   const addFiles = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -180,6 +184,7 @@ export function SendPage({ pcId }: { pcId: string | null }) {
   );
   const done = items.filter((it) => it.state === "done").length;
   const failed = items.filter((it) => it.state === "failed").length;
+  const usable = items.filter((it) => it.quality === "ok").length;
   const canAdd = status === "connected";
 
   return (
@@ -259,6 +264,19 @@ export function SendPage({ pcId }: { pcId: string | null }) {
               Přijato {done} z {items.length}
             </p>
           </div>
+          {done > 0 && (
+            <p
+              className={`rounded-xl px-4 py-3 font-semibold ${usable > 0 ? "bg-emerald-400/15 text-emerald-300" : "bg-volt/10 text-volt"}`}
+              data-testid="usable-summary"
+              aria-live="polite"
+            >
+              {usable > 0
+                ? `Použitelné pro měření: ${usable} z ${done}`
+                : items.some((it) => it.state === "done" && !it.quality)
+                  ? "Počítač kontroluje fotky…"
+                  : "Zatím žádná použitelná fotka – vyfoť terč celý a víc zepředu."}
+            </p>
+          )}
           <ul className="grid gap-2">
             {items.map((it) => (
               <li key={it.id} className="rounded-xl bg-navy-light px-4 py-3" data-testid="sent-item" data-state={it.state}>
@@ -278,6 +296,15 @@ export function SendPage({ pcId }: { pcId: string | null }) {
                   </div>
                 )}
                 {it.error && <p className="mt-1 text-sm text-red-300">{it.error}</p>}
+                {it.state === "done" && (
+                  <p
+                    className={`mt-1 text-sm ${it.quality === "ok" ? "text-emerald-300" : it.quality ? "text-volt" : "animate-pulse text-mist"}`}
+                    data-testid="sent-quality"
+                    data-quality={it.quality ?? "pending"}
+                  >
+                    {it.qualityText ?? "Počítač hledá terč…"}
+                  </p>
+                )}
               </li>
             ))}
           </ul>

@@ -52,7 +52,8 @@ export class PhotoReceiver {
 
   constructor(
     private readonly conn: DataConnection,
-    private readonly onPhoto: (photo: ReceivedPhoto) => Promise<void>,
+    /** Called with the validated photo and the phone's transfer id (used for later messages about it). */
+    private readonly onPhoto: (photo: ReceivedPhoto, transferId: string) => Promise<void>,
   ) {}
 
   handle(msg: PhoneMessage): void {
@@ -94,7 +95,7 @@ export class PhotoReceiver {
     const blob = new Blob(cur.parts, { type: cur.mime });
     try {
       const { width, height } = await inspectPhoto(blob, cur.mime);
-      await this.onPhoto({ name: cur.name, mime: cur.mime, size: cur.size, width, height, blob });
+      await this.onPhoto({ name: cur.name, mime: cur.mime, size: cur.size, width, height, blob }, cur.id);
       this.reply({ type: "photo-ack", id: cur.id, ok: true });
     } catch (err) {
       this.reject(cur.id, err instanceof ImageError ? err.message : "Fotku se nepodařilo uložit.");

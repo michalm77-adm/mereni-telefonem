@@ -1,9 +1,15 @@
-export type Route = { page: "desk" } | { page: "targets" } | { page: "send"; pcId: string | null };
+export type Route =
+  | { page: "desk" }
+  | { page: "targets" }
+  | { page: "measure"; photoId: number }
+  | { page: "send"; pcId: string | null };
 
 const PC_ID_PATTERN = /^[a-z0-9-]{8,64}$/;
 
 export function parseRoute(hash: string): Route {
   if (hash === "#/terce") return { page: "targets" };
+  const photo = /^#\/foto\/(\d{1,9})$/.exec(hash);
+  if (photo) return { page: "measure", photoId: Number(photo[1]) };
   if (!hash.startsWith("#/send")) return { page: "desk" };
   const query = hash.split("?")[1] ?? "";
   const pcId = new URLSearchParams(query).get("pc");

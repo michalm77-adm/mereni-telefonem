@@ -6,12 +6,17 @@ export type PhoneMessage =
   | { type: "photo-chunk"; id: string; index: number; data: ArrayBuffer }
   | { type: "photo-end"; id: string; chunks: number };
 
+/** How usable a photo is for measuring (result of target detection on the PC). */
+export const QUALITIES = ["ok", "small", "skewed", "missing", "error"] as const;
+export type Quality = (typeof QUALITIES)[number];
+
 export type PcMessage =
   | { type: "waiting" }
   | { type: "welcome" }
   | { type: "rejected" }
   | { type: "photo-ack"; id: string; ok: true }
-  | { type: "photo-ack"; id: string; ok: false; reason: string };
+  | { type: "photo-ack"; id: string; ok: false; reason: string }
+  | { type: "photo-quality"; id: string; quality: Quality; message: string };
 
 /** Phone sends a ping this often; the PC drops a phone that has been silent for PHONE_TIMEOUT_MS. */
 export const PING_INTERVAL_MS = 3000;
@@ -76,6 +81,14 @@ export function isPhoneMessage(data: unknown): data is PhoneMessage {
 export function isPcMessage(data: unknown): data is PcMessage {
   if (!isRecord(data)) return false;
   if (data.type === "waiting" || data.type === "welcome" || data.type === "rejected") return true;
+  if (data.type === "photo-quality") {
+    return (
+      isId(data.id) &&
+      (QUALITIES as readonly unknown[]).includes(data.quality) &&
+      typeof data.message === "string" &&
+      data.message.length <= 200
+    );
+  }
   return data.type === "photo-ack" && isId(data.id) && typeof data.ok === "boolean";
 }
 

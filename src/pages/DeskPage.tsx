@@ -5,6 +5,7 @@ import { Header } from "../components/Header";
 import { PhotoGrid } from "../components/PhotoGrid";
 import { QrCode } from "../components/QrCode";
 import { StatusBadge } from "../components/StatusBadge";
+import { analysePhoto, isUsable, needsAnalysis } from "../lib/analysis";
 import { deletePhoto, listPhotos, savePhoto, type StoredPhoto } from "../lib/db";
 import { phoneCannotReach, senderUrl } from "../lib/links";
 import { PC_ID_PREFIX, peerOptions, randomId } from "../lib/peer";
@@ -74,7 +75,14 @@ export function DeskPage() {
   }, []);
 
   useEffect(() => {
-    void reloadPhotos();
+    void (async () => {
+      await reloadPhotos();
+      // Photos received earlier (or analysed by an older version) get analysed now.
+      for (const photo of await listPhotos().catch(() => [])) {
+        if (needsAnalysis(photo)) await analysePhoto(photo.id).catch(() => undefined);
+      }
+      await reloadPhotos();
+    })();
   }, [reloadPhotos]);
 
   useEffect(() => {
@@ -112,9 +120,14 @@ export function DeskPage() {
       };
       heardFromPhone();
 
-      const receiver = new PhotoReceiver(conn, async (photo) => {
-        await savePhoto({ ...photo, device: name, receivedAt: new Date() });
+      const receiver = new PhotoReceiver(conn, async (photo, transferId) => {
+        const id = await savePhoto({ ...photo, device: name, receivedAt: new Date() });
         await reloadPhotos();
+        // Look for the target right away and tell the phone whether the photo is usable.
+        void analysePhoto(id).then(async (analysis) => {
+          await reloadPhotos();
+          reply({ type: "photo-quality", id: transferId, quality: analysis.quality, message: analysis.message });
+        });
       });
       conns.current.set(connId, link);
 
@@ -311,9 +324,24 @@ export function DeskPage() {
         </div>
 
         <section aria-labelledby="photos-title" className="flex flex-col gap-4">
-          <h2 id="photos-title" className="text-2xl font-bold tracking-wide">
-            Fotky <span className="text-mist" data-testid="photo-count">({photos.length})</span>
-          </h2>
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 id="photos-title" className="text-2xl font-bold tracking-wide">
+              Fotky <span className="text-mist" data-testid="photo-count">({photos.length})</span>
+            </h2>
+            {photos.length > 0 && (
+              <p className="font-semibold" data-testid="usable-summary" aria-live="polite">
+                Použitelné pro měření:{" "}
+                <span className={photos.some(isUsable) ? "text-emerald-300" : "text-red-300"}>
+                  {photos.filter(isUsable).length} z {photos.length}
+                </span>
+              </p>
+            )}
+          </div>
+          {photos.length > 0 && !photos.some(isUsable) && photos.every((p) => p.analysis) && (
+            <p className="rounded-2xl border border-volt/40 bg-volt/10 p-4 text-volt" role="note">
+              Zatím žádná fotka není použitelná. Na fotce musí být celý terč, ostře a co nejvíc zepředu.
+            </p>
+          )}
           {storageError && (
             <p className="rounded-2xl bg-red-400/15 p-4 text-red-300" role="alert">
               Prohlížeč nedovolil fotky uložit. Nepoužíváš anonymní okno?
