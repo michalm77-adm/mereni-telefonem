@@ -25,9 +25,11 @@
 2. **F02** Telefon naskenuje QR → otevře se stránka pro odeslání → „+“ otevře galerii/fotoaparát → fotky se pošlou do PC (obě zařízení na stejné Wi-Fi).
 3. **F03** Kontrola odeslaných fotek: telefon dostane potvrzení o přijetí, PC ukáže seznam fotek a zda jich je pro zaměření dost.
 4. Zaměření: z terčů na fotkách spočítat rozměry a zobrazit kóty.
+5. **F05** Skládání zařízení na plochu (2D, HOTOVO): na fotce obkreslit obrys plochy → narovnaný pohled zepředu v mm → vkládat (předvolby + vlastní rozměr) a posouvat zařízení (myš i klávesnice), kóty k okrajům plochy a mezi zařízeními se přepočítávají.
 
 ### Později
-- Skládání zařízení na plochu / v prostoru z uložených objektů, přesouvání myší, přepočet kót.
+- **Ukládání do složky na PC** (přání majitele): uživatel si jednou vybere složku (např. `Dokumenty\Měření`) a aplikace do ní ukládá fotky, kóty a plochy jako běžné soubory, každá zakázka do podsložky. Řešení: File System Access API (`showDirectoryPicker`, oprávnění si prohlížeč pamatuje) — jen Chrome/Edge; Firefox/Safari zůstanou u IndexedDB + ruční stažení (ZIP). IndexedDB dál slouží jako rychlá mezipaměť. Aplikace je víceuživatelská, ale data každého uživatele zůstávají jen na jeho počítači (žádný server).
+- Skládání zařízení v prostoru (3D).
 - Přihlášení (napojení na účet platformy „Nástroje elektrotechnika“), AI model, e-mail, mapy, kalendář.
 
 ### Aplikace dělat nebude
@@ -37,8 +39,8 @@
 - Statická webová aplikace (PWA) — jedna stránka pro PC i mobil, hosting GitHub Pages (HTTPS → funguje fotoaparát i instalace).
 - Vite 8 + React 19 + TypeScript 7, Tailwind CSS 4, font Barlow (@fontsource, funguje offline), QR přes `qrcode`.
 - Přenos fotek telefon → PC: WebRTC přes PeerJS. PC zobrazí QR s odkazem obsahujícím jednorázové ID spojení; veřejný server PeerJS jen „seznámí“ zařízení, samotné fotky jdou napřímo po Wi-Fi.
-- Zaměření: OpenCV.js + terče ArUco (tištěné, známá velikost). 2D = homografie z terče v rovině; 3D = více fotek s terči (řešit až po 2D).
-- Ukládání: IndexedDB (Dexie) v prohlížeči PC → data přežijí obnovení stránky.
+- Zaměření: js-aruco2 (Web Worker) + terče ArUco (tištěné, známá velikost). 2D = homografie z terče v rovině; 3D = více fotek s terči (řešit až po 2D).
+- Ukládání (stav teď): IndexedDB (Dexie) v prohlížeči PC, kde běží stránka → přežije obnovení stránky, ale není to složka na disku a smaže se s daty prohlížeče. Plán: složka na PC (viz Později).
 - Testy: Playwright (E2E).
 - Ověřuj na internetu nejnovější stabilní verze knihoven před instalací.
 
@@ -65,6 +67,7 @@
 | T03 | Kontrola odeslaných fotek | Potvrdím odeslání | Dostanu potvrzení o přijetí + u každé fotky, zda je použitelná (terč nalezen / malý / z boku / chybí) |
 | T04 | Tisk terčů A4 | Vytisknu terč(e) | Každý terč na vlastní A4, černý čtverec 180 mm, kód podle ArUco |
 | T05 | Kóty na fotce | Kliknu 2 body na fotce s terčem | Rozměr v mm (test: chyba < 2 mm na 100 mm i z perspektivy) |
+| T06 | Rozmístění na plochu | Obkreslím plochu, přidám a posunu zařízení | Narovnaná plocha ve správné velikosti, kóty k okrajům a mezi zařízeními sedí, přesah = červeně |
 
 Závěrečný checklist před spuštěním:
 - [ ] T01, T02, T03
@@ -119,13 +122,14 @@ mereni-telefonem/
 ├── public/              # favicon a statické soubory
 ├── security_warnings.md # známá bezpečnostní rizika
 └── src/
-    ├── App.tsx          # hash router: "#/" = PC, "#/send?pc=<id>" = telefon, "#/terce" = tisk terčů, "#/foto/<id>" = měření
-    ├── pages/           # DeskPage (PC, QR kód), SendPage (telefon, tlačítko +), TargetsPage (terče A4), MeasurePage (kóty)
+    ├── App.tsx          # hash router: "#/" = PC, "#/send?pc=<id>" = telefon, "#/terce" = tisk terčů, "#/foto/<id>" = měření, "#/plocha/<id>" = rozmístění
+    ├── pages/           # DeskPage (PC, QR, fotky, plochy), SendPage (telefon, +), TargetsPage (terče A4), MeasurePage (kóty, obrys plochy), WallPage (rozmístění)
     ├── components/      # Header, QrCode, StatusBadge, PhotoGrid, ConfirmDialog (každé mazání), TargetSheet (SVG A4 v mm)
     └── lib/             # links (adresa QR), peer (PeerJS), protocol (zprávy + validace), transfer (posílání po kouscích),
                          # image (kontrola/převod fotek), db (Dexie: fotky v IndexedDB), storage,
                          # markers + aruco-dictionary (geometrie terče, kódy ARUCO_MIP_36h12),
-                         # detect (Web Worker), analysis (hodnocení fotky, homografie), homography (výpočet)
+                         # detect (Web Worker), analysis (hodnocení fotky, homografie), homography (výpočet),
+                         # layout (kóty zařízení, přesahy, předvolby zařízení)
 public/aruco/            # js-aruco2 2.0.0 (MIT, beze změn) + worker.js – rozpoznání terčů ve vlákně
 ```
 
@@ -146,13 +150,14 @@ public/aruco/            # js-aruco2 2.0.0 (MIT, beze změn) + worker.js – roz
 - Terč: A4 na výšku, černý čtverec 180 mm = 8 polí po 22,5 mm (6×6 datových + černý okraj), levý horní roh 15 mm / 26 mm od rohu listu, rysky na středech stran. Číslo terče = ArUco ID (1–249, 0 nepoužíváme). Rozměry jsou v `src/lib/markers.ts` (`TARGET`) — rozpoznávání na nich závisí, neměnit bez důvodu.
 - Rozpoznání: PC po přijetí fotky hledá terč ve Web Workeru (zmenšení na 2400 a pak 1200 px), výsledek (`analysis`) uloží k fotce a pošle telefonu zprávu `photo-quality`. Hodnocení: `ok` / `small` (strana < 120 px) / `skewed` (poměr protilehlých hran < 0,6) / `missing` / `error`. Při změně algoritmu zvyš `ANALYSIS_VERSION` → staré fotky se přepočítají.
 - Měření: homografie z rohů největšího terče na fotce (fotka px → mm na rovině terče). Platí jen pro body ve stejné rovině jako terč. Kóty (`dims`) se ukládají k fotce v px fotky, mm se vždy dopočítají. Víc terčů na jedné fotce zatím nekombinujeme (neznáme jejich vzájemnou polohu).
+- Plochy (Dexie tabulka `walls`, verze DB 2): obrys v mm + homografie uložená přímo u plochy (nezmění se přepočtem fotky) + zařízení (x/y = levý horní roh v mm, y roste dolů). Narovnaná fotka = CSS `matrix3d` z homografie (žádné přepočítávání pixelů), mimo obrys ztlumená. Osy plochy = osy terče → terč věšet rovně (rysky + vodováha). Podlaha = spodní okraj obrysu. Přichytávání 10 mm: vodorovně od levého kraje, svisle od podlahy. Kóty vybraného zařízení: v každém směru k nejbližšímu zařízení v pásu, jinak k obrysu (paprsek ze středu hrany). Smazání fotky plochy zachová (jen bez pozadí).
 - E2E testy si vyrábí syntetické fotky terče se skutečnou perspektivou (`makeTargetPhoto` v `e2e/helpers.ts`).
 - Bez StrictMode (dvojí připojení by v dev obsadilo stejné PeerJS ID).
 - Když se IP adresa PC ve Wi-Fi změní, uprav `VITE_LAN_URL` v `.env.local`.
 
 ## Rozhodnutí
 - 2026-11-17: Statická PWA na GitHub Pages + WebRTC (PeerJS) pro přenos fotek. Důvod: GitHub Pages neumí server, WebRTC posílá fotky napřímo telefon → PC bez vlastního backendu.
-- 2026-11-17: Terče ArUco + OpenCV.js. Důvod: spolehlivé rozpoznání v prohlížeči, známá velikost terče dává měřítko.
+- 2026-11-17: Terče ArUco + js-aruco2 (místo OpenCV.js, které má ~8 MB a nemusí obsahovat ArUco). Důvod: malé, MIT, běží ve Web Workeru; známá velikost terče dává měřítko.
 - 2026-11-17: Terče A4, každý s vlastním číslem (ArUco ID) už od první verze. Velké plochy (např. 10 × 8 m) = víc terčů A4 po 2–3 m, na každé fotce aspoň 2, fotky se překrývají; volitelně jedna vzdálenost změřená laserem pro upřesnění měřítka a kontrolu přesnosti. Ne jeden velký terč (přesnost klesá se vzdáleností, špatně se tiskne).
 - 2026-11-17: První verze bez přihlášení (GitHub Pages nemá backend); přihlášení později přes platformu Nástroje elektrotechnika.
 

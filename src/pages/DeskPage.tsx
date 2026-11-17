@@ -6,7 +6,7 @@ import { PhotoGrid } from "../components/PhotoGrid";
 import { QrCode } from "../components/QrCode";
 import { StatusBadge } from "../components/StatusBadge";
 import { analysePhoto, isUsable, needsAnalysis } from "../lib/analysis";
-import { deletePhoto, listPhotos, savePhoto, type StoredPhoto } from "../lib/db";
+import { deletePhoto, deleteWall, listPhotos, listWalls, savePhoto, type StoredPhoto, type Wall } from "../lib/db";
 import { phoneCannotReach, senderUrl } from "../lib/links";
 import { PC_ID_PREFIX, peerOptions, randomId } from "../lib/peer";
 import { deviceName, isPhoneMessage, PHONE_TIMEOUT_MS, type PcMessage } from "../lib/protocol";
@@ -60,6 +60,14 @@ export function DeskPage() {
   const [photos, setPhotos] = useState<StoredPhoto[]>([]);
   const [storageError, setStorageError] = useState(false);
   const [toDelete, setToDelete] = useState<StoredPhoto | null>(null);
+  const [walls, setWalls] = useState<Wall[]>([]);
+  const [wallToDelete, setWallToDelete] = useState<Wall | null>(null);
+
+  useEffect(() => {
+    listWalls()
+      .then(setWalls)
+      .catch(() => setWalls([]));
+  }, []);
   const [attempt, setAttempt] = useState(0);
   const [copied, setCopied] = useState(false);
   const retries = useRef(0);
@@ -323,6 +331,32 @@ export function DeskPage() {
           </section>
         </div>
 
+        {walls.length > 0 && (
+          <section aria-labelledby="walls-title" className="flex flex-col gap-3">
+            <h2 id="walls-title" className="text-2xl font-bold tracking-wide">
+              Plochy <span className="text-mist">({walls.length})</span>
+            </h2>
+            <ul className="grid grid-cols-[repeat(auto-fill,minmax(16rem,1fr))] gap-3">
+              {walls.map((w) => (
+                <li key={w.id} className="flex items-center justify-between gap-2 rounded-2xl bg-navy-light p-4" data-testid="wall-item">
+                  <a href={`#/plocha/${w.id}`} className="min-w-0 hover:underline">
+                    <span className="block truncate text-lg font-bold text-volt">{w.name}</span>
+                    <span className="text-sm text-mist">{w.devices.length} zařízení</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setWallToDelete(w)}
+                    className="shrink-0 rounded-lg px-2 py-1 text-sm font-semibold text-red-300 hover:bg-red-400/15"
+                    aria-label={`Smazat plochu ${w.name}`}
+                  >
+                    Smazat
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         <section aria-labelledby="photos-title" className="flex flex-col gap-4">
           <div className="flex flex-wrap items-baseline justify-between gap-3">
             <h2 id="photos-title" className="text-2xl font-bold tracking-wide">
@@ -359,6 +393,21 @@ export function DeskPage() {
         onCancel={() => setToDelete(null)}
       >
         Fotka „{toDelete?.name}“ se z tohoto počítače nenávratně smaže.
+        {toDelete && walls.some((w) => w.photoId === toDelete.id) && " Plochy z ní zůstanou, jen bez fotky na pozadí."}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={wallToDelete !== null}
+        title="Smazat plochu?"
+        confirmLabel="Smazat"
+        onConfirm={() => {
+          const w = wallToDelete;
+          setWallToDelete(null);
+          if (!w) return;
+          void deleteWall(w.id).then(() => setWalls((list) => list.filter((x) => x.id !== w.id)));
+        }}
+        onCancel={() => setWallToDelete(null)}
+      >
+        Plocha „{wallToDelete?.name}“ i s rozmístěnými zařízeními se smaže. Fotka zůstane.
       </ConfirmDialog>
     </div>
   );

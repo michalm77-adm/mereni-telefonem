@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } fr
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Header } from "../components/Header";
 import { planeHomography } from "../lib/analysis";
-import { getPhoto, saveDimensions, type Dimension, type StoredPhoto } from "../lib/db";
+import { createWall, getPhoto, listWalls, saveDimensions, type Dimension, type StoredPhoto, type Wall } from "../lib/db";
 import { applyHomography, distance, type Homography, type Point } from "../lib/homography";
 import { randomId } from "../lib/peer";
 
@@ -26,7 +26,17 @@ export function MeasurePage({ photoId }: { photoId: number }) {
   const [zoom, setZoom] = useState<(typeof ZOOMS)[number]>(1);
   const [toDelete, setToDelete] = useState<Dimension | "all" | null>(null);
   const [unit, setUnit] = useState(1); // photo pixels per screen pixel
+  const [mode, setMode] = useState<"dims" | "outline">("dims");
+  const [outline, setOutline] = useState<Point[]>([]);
+  const [walls, setWalls] = useState<Wall[]>([]);
+  const [saving, setSaving] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  useEffect(() => {
+    listWalls()
+      .then((all) => setWalls(all.filter((w) => w.photoId === photoId)))
+      .catch(() => setWalls([]));
+  }, [photoId]);
 
   useEffect(() => {
     let objectUrl: string | null = null;
@@ -58,7 +68,10 @@ export function MeasurePage({ photoId }: { photoId: number }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setStart(null);
+      if (e.key === "Escape") {
+        setStart(null);
+        setOutline([]);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -83,9 +96,33 @@ export function MeasurePage({ photoId }: { photoId: number }) {
     return { x: p.x, y: p.y };
   };
 
+  const finishOutline = async (points: Point[]) => {
+    if (!photo || !homography || points.length < 3 || saving) return;
+    setSaving(true);
+    try {
+      const all = await listWalls();
+      const id = await createWall({
+        name: `Plocha ${all.length + 1}`,
+        photoId: photo.id,
+        homography,
+        outline: points.map((p) => applyHomography(homography, p)),
+        devices: [],
+      });
+      window.location.hash = `#/plocha/${id}`;
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const onClick = (e: MouseEvent<SVGSVGElement>) => {
     const p = toPhoto(e);
     if (!p || !homography) return;
+    if (mode === "outline") {
+      // Clicking the first point again closes the outline.
+      if (outline.length >= 3 && distance(p, outline[0]) < 14 * unit) void finishOutline(outline);
+      else if (!outline.length || distance(p, outline[outline.length - 1]) >= 2 * unit) setOutline([...outline, p]);
+      return;
+    }
     if (!start) {
       setStart(p);
       return;
@@ -148,10 +185,57 @@ export function MeasurePage({ photoId }: { photoId: number }) {
                 {z}×
               </button>
             ))}
+            <span className="mr-1 ml-4 font-semibold text-mist">Režim:</span>
+            {(
+              [
+                ["dims", "Kóty"],
+                ["outline", "Vyznačit plochu"],
+              ] as const
+            ).map(([m, label]) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  setMode(m);
+                  setStart(null);
+                  setOutline([]);
+                }}
+                aria-pressed={mode === m}
+                className={`rounded-xl px-4 py-2 font-bold ${mode === m ? "bg-volt text-navy" : "border border-white/20"}`}
+              >
+                {label}
+              </button>
+            ))}
             <p className="ml-auto text-mist" aria-live="polite" data-testid="measure-hint">
-              {start ? "Klikni na druhý bod (Esc = zrušit)" : "Klikni na první bod kóty"}
+              {mode === "outline"
+                ? outline.length < 3
+                  ? `Klikej postupně na rohy plochy (${outline.length} z min. 3)`
+                  : "Klikni na první bod nebo „Uzavřít plochu“"
+                : start
+                  ? "Klikni na druhý bod (Esc = zrušit)"
+                  : "Klikni na první bod kóty"}
             </p>
           </div>
+          {mode === "outline" && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setOutline(outline.slice(0, -1))}
+                disabled={outline.length === 0}
+                className="rounded-xl border border-white/20 px-4 py-2 font-semibold disabled:opacity-40"
+              >
+                Vrátit poslední bod
+              </button>
+              <button
+                type="button"
+                onClick={() => void finishOutline(outline)}
+                disabled={outline.length < 3 || saving}
+                className="rounded-xl bg-volt px-4 py-2 font-bold text-navy disabled:opacity-40"
+              >
+                Uzavřít plochu a rozmístit zařízení
+              </button>
+            </div>
+          )}
 
           <div className="max-h-[78vh] overflow-auto rounded-2xl bg-navy-dark">
             <div className="relative" style={{ width: `${zoom * 100}%` }}>
@@ -215,6 +299,21 @@ export function MeasurePage({ photoId }: { photoId: number }) {
                   );
                 })}
 
+                {outline.length > 0 && (
+                  <g pointerEvents="none" data-testid="outline-draft">
+                    <polyline
+                      points={[...outline, ...(hover ? [hover] : [])].map((p) => `${p.x},${p.y}`).join(" ")}
+                      fill="rgb(250 182 10 / 0.12)"
+                      stroke="#fab60a"
+                      strokeWidth={stroke}
+                      strokeDasharray={`${10 * unit} ${6 * unit}`}
+                    />
+                    {outline.map((p, i) => (
+                      <circle key={i} cx={p.x} cy={p.y} r={(i === 0 ? 9 : 6) * unit} fill={i === 0 ? "#34d399" : "#fab60a"} stroke="#121c2d" strokeWidth={1.5 * unit} />
+                    ))}
+                  </g>
+                )}
+
                 {start && (
                   <g pointerEvents="none">
                     {hover && <line x1={start.x} y1={start.y} x2={hover.x} y2={hover.y} stroke="#fab60a" strokeWidth={stroke} strokeDasharray={`${8 * unit} ${6 * unit}`} />}
@@ -237,8 +336,25 @@ export function MeasurePage({ photoId }: { photoId: number }) {
               {photo.analysis!.message}. Kóty mohou být nepřesné.
             </p>
           )}
+          {walls.length > 0 && (
+            <div>
+              <h2 className="mb-2 text-xl font-bold">Plochy z této fotky</h2>
+              <ul className="grid gap-2">
+                {walls.map((w) => (
+                  <li key={w.id}>
+                    <a href={`#/plocha/${w.id}`} className="block rounded-xl bg-navy-light px-4 py-2 font-semibold text-volt hover:underline">
+                      {w.name} ({w.devices.length} zař.)
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="rounded-2xl bg-navy-light p-4 text-mist">
-            <p>Klikni na začátek a konec rozměru. Kóta se spočítá podle terče.</p>
+            <p>
+              <strong className="text-white">Kóty:</strong> klikni na začátek a konec rozměru. <strong className="text-white">Plocha:</strong> obkresli
+              rohy zdi a pak na ni rozmísti zařízení.
+            </p>
             <p className="mt-2">
               <strong className="text-white">Měř jen body na stejné ploše jako terč</strong> (např. na zdi, kde terč visí). Body mimo tuto plochu
               vyjdou špatně.
