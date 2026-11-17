@@ -1,4 +1,6 @@
-export function Header({ subtitle }: { subtitle: string }) {
+import type { ReactNode } from "react";
+
+export function Header({ subtitle, actions }: { subtitle: string; actions?: ReactNode }) {
   return (
     <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3 sm:px-6">
       <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-volt text-navy" aria-hidden="true">
@@ -11,6 +13,7 @@ export function Header({ subtitle }: { subtitle: string }) {
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-volt">2M elektro</p>
         <h1 className="truncate text-lg font-bold tracking-wide sm:text-xl">Měření telefonem · {subtitle}</h1>
       </div>
+      {actions && <div className="ml-auto flex shrink-0 gap-2">{actions}</div>}
     </header>
   );
 }

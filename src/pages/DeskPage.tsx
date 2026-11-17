@@ -210,7 +210,14 @@ export function DeskPage() {
 
   return (
     <div className="min-h-dvh">
-      <Header subtitle="počítač" />
+      <Header
+        subtitle="počítač"
+        actions={
+          <a href="#/terce" className="rounded-xl border border-volt/60 px-4 py-2 font-semibold text-volt hover:bg-volt hover:text-navy">
+            Tisk terčů
+          </a>
+        }
+      />
       <main className="mx-auto grid max-w-6xl gap-8 px-4 py-8 sm:px-6">
         <div className="grid gap-8 md:grid-cols-[auto_1fr] md:items-start">
           <section aria-labelledby="pair-title" className="flex flex-col items-center gap-4">

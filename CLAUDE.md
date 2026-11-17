@@ -63,6 +63,7 @@
 | T01 | PC zobrazí QR kód | Načtu QR telefonem | V mobilu se otevře stránka pro odeslání fotek |
 | T02 | Nafotit, vybrat z galerie, odeslat do PC | Kontroluji výstup na monitoru | Zobrazení se všemi možnými kótami |
 | T03 | Kontrola odeslaných fotek | Potvrdím odeslání | Dostanu potvrzení o přijetí |
+| T04 | Tisk terčů A4 | Vytisknu terč(e) | Každý terč na vlastní A4, černý čtverec 180 mm, kód podle ArUco |
 
 Závěrečný checklist před spuštěním:
 - [ ] T01, T02, T03
@@ -117,11 +118,12 @@ mereni-telefonem/
 ├── public/              # favicon a statické soubory
 ├── security_warnings.md # známá bezpečnostní rizika
 └── src/
-    ├── App.tsx          # hash router: "#/" = PC, "#/send?pc=<id>" = telefon
-    ├── pages/           # DeskPage (PC, QR kód), SendPage (telefon, tlačítko +)
-    ├── components/      # Header, QrCode, StatusBadge, PhotoGrid, ConfirmDialog (každé mazání)
+    ├── App.tsx          # hash router: "#/" = PC, "#/send?pc=<id>" = telefon, "#/terce" = tisk terčů
+    ├── pages/           # DeskPage (PC, QR kód), SendPage (telefon, tlačítko +), TargetsPage (terče A4)
+    ├── components/      # Header, QrCode, StatusBadge, PhotoGrid, ConfirmDialog (každé mazání), TargetSheet (SVG A4 v mm)
     └── lib/             # links (adresa QR), peer (PeerJS), protocol (zprávy + validace), transfer (posílání po kouscích),
-                         # image (kontrola/převod fotek), db (Dexie: fotky v IndexedDB), storage
+                         # image (kontrola/převod fotek), db (Dexie: fotky v IndexedDB), storage,
+                         # markers + aruco-dictionary (geometrie terče, kódy ARUCO_MIP_36h12)
 ```
 
 ## Příkazy (vše v Dockeru)
@@ -138,12 +140,14 @@ mereni-telefonem/
 - ID počítače se pamatuje v localStorage → QR kód zůstane stejný i po obnovení stránky.
 - Nový telefon musí uživatel na PC „Povolit“; povolené telefony (trvalé `deviceId` telefonu) si PC pamatuje v localStorage. Fotky od nepovoleného telefonu PC zahodí.
 - Fotky: kousky po 16 kB s řízením toku, PC po přijetí ověří skutečný typ (první bajty) a že jde obrázek otevřít, pak pošle `photo-ack`. Limit 30 MB. Velké fotky / HEIC telefon převede na JPEG (max 4096 px); malé JPG/PNG/WebP jdou beze změny (zachová EXIF).
+- Terč: A4 na výšku, černý čtverec 180 mm = 8 polí po 22,5 mm (6×6 datových + černý okraj), levý horní roh 15 mm / 26 mm od rohu listu, rysky na středech stran. Číslo terče = ArUco ID (1–249, 0 nepoužíváme). Rozměry jsou v `src/lib/markers.ts` (`TARGET`) — rozpoznávání na nich závisí, neměnit bez důvodu.
 - Bez StrictMode (dvojí připojení by v dev obsadilo stejné PeerJS ID).
 - Když se IP adresa PC ve Wi-Fi změní, uprav `VITE_LAN_URL` v `.env.local`.
 
 ## Rozhodnutí
 - 2026-11-17: Statická PWA na GitHub Pages + WebRTC (PeerJS) pro přenos fotek. Důvod: GitHub Pages neumí server, WebRTC posílá fotky napřímo telefon → PC bez vlastního backendu.
 - 2026-11-17: Terče ArUco + OpenCV.js. Důvod: spolehlivé rozpoznání v prohlížeči, známá velikost terče dává měřítko.
+- 2026-11-17: Terče A4, každý s vlastním číslem (ArUco ID) už od první verze. Velké plochy (např. 10 × 8 m) = víc terčů A4 po 2–3 m, na každé fotce aspoň 2, fotky se překrývají; volitelně jedna vzdálenost změřená laserem pro upřesnění měřítka a kontrolu přesnosti. Ne jeden velký terč (přesnost klesá se vzdáleností, špatně se tiskne).
 - 2026-11-17: První verze bez přihlášení (GitHub Pages nemá backend); přihlášení později přes platformu Nástroje elektrotechnika.
 
 ## Údržba tohoto souboru
