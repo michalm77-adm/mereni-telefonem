@@ -1,4 +1,4 @@
-import { db, type StoredPhoto } from "./db";
+import { db, notifyChange, type StoredPhoto } from "./db";
 import { detectMarkers, type DetectedMarker } from "./detect";
 import { distance, homographyFrom4, type Homography } from "./homography";
 import { TARGET } from "./markers";
@@ -96,6 +96,7 @@ export function analysePhoto(id: number): Promise<Analysis> {
       analysis = { version: ANALYSIS_VERSION, quality: "error", message: qualityMessage("error", null), markers: [], primaryId: null };
     }
     await db.photos.update(id, { analysis });
+    notifyChange();
     return analysis;
   });
   chain = run.catch(() => undefined);

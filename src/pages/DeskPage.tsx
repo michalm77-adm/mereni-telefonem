@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Peer, { type DataConnection } from "peerjs";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { FolderPanel } from "../components/FolderPanel";
 import { Header } from "../components/Header";
 import { PhotoGrid } from "../components/PhotoGrid";
 import { QrCode } from "../components/QrCode";
@@ -14,6 +15,11 @@ import { readStored, writeStored } from "../lib/storage";
 import { PhotoReceiver } from "../lib/transfer";
 
 const PC_ID_KEY = "2m-mereni:pc-id";
+const JOB_KEY = "2m-mereni:job";
+
+function defaultJob(): string {
+  return `Zakázka ${new Date().toLocaleDateString("sv-SE")}`; // sv-SE = YYYY-MM-DD
+}
 const APPROVED_KEY = "2m-mereni:approved-phones";
 const MAX_APPROVED = 50;
 const MAX_ID_RETRIES = 4;
@@ -60,7 +66,15 @@ export function DeskPage() {
   const [photos, setPhotos] = useState<StoredPhoto[]>([]);
   const [storageError, setStorageError] = useState(false);
   const [toDelete, setToDelete] = useState<StoredPhoto | null>(null);
+  const [job, setJob] = useState(() => readStored(JOB_KEY) ?? defaultJob());
+  const jobRef = useRef(job);
   const [walls, setWalls] = useState<Wall[]>([]);
+
+  const changeJob = (value: string) => {
+    setJob(value);
+    jobRef.current = value;
+    writeStored(JOB_KEY, value);
+  };
   const [wallToDelete, setWallToDelete] = useState<Wall | null>(null);
 
   useEffect(() => {
@@ -129,7 +143,7 @@ export function DeskPage() {
       heardFromPhone();
 
       const receiver = new PhotoReceiver(conn, async (photo, transferId) => {
-        const id = await savePhoto({ ...photo, device: name, receivedAt: new Date() });
+        const id = await savePhoto({ ...photo, device: name, receivedAt: new Date(), job: jobRef.current.trim() || defaultJob() });
         await reloadPhotos();
         // Look for the target right away and tell the phone whether the photo is usable.
         void analysePhoto(id).then(async (analysis) => {
@@ -330,6 +344,8 @@ export function DeskPage() {
             </div>
           </section>
         </div>
+
+        <FolderPanel job={job} onJobChange={changeJob} />
 
         {walls.length > 0 && (
           <section aria-labelledby="walls-title" className="flex flex-col gap-3">

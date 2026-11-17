@@ -20,7 +20,14 @@ export type StoredPhoto = {
   analysis?: Analysis;
   /** Dimensions the user measured on this photo. */
   dims?: Dimension[];
+  /** Job ("zakázka") the photo belongs to = subfolder in the save folder. */
+  job?: string;
+  /** File name already written to the save folder (missing = not saved yet). */
+  savedAs?: string;
 };
+
+/** Small key/value store (e.g. the chosen save folder handle). */
+export type Setting = { key: string; value: unknown };
 
 /** A device placed on a wall; x/y = top-left corner in mm (wall plane coordinates, y grows downwards). */
 export type Device = { id: string; name: string; x: number; y: number; w: number; h: number };
@@ -42,6 +49,7 @@ export type Wall = {
 export const db = new Dexie("2m-mereni") as Dexie & {
   photos: EntityTable<StoredPhoto, "id">;
   walls: EntityTable<Wall, "id">;
+  settings: EntityTable<Setting, "key">;
 };
 
 db.version(1).stores({
@@ -50,6 +58,11 @@ db.version(1).stores({
 db.version(2).stores({
   photos: "++id, receivedAt",
   walls: "++id, photoId, createdAt",
+});
+db.version(3).stores({
+  photos: "++id, receivedAt",
+  walls: "++id, photoId, createdAt",
+  settings: "key",
 });
 
 export async function listPhotos(): Promise<StoredPhoto[]> {
@@ -61,11 +74,25 @@ export async function getPhoto(id: number): Promise<StoredPhoto | undefined> {
 }
 
 export async function savePhoto(photo: Omit<StoredPhoto, "id">): Promise<number> {
-  return db.photos.add(photo);
+  const id = await db.photos.add(photo);
+  notifyChange();
+  return id;
 }
 
 export async function saveDimensions(id: number, dims: Dimension[]): Promise<void> {
   await db.photos.update(id, { dims });
+  notifyChange();
+}
+
+let changeListener: (() => void) | null = null;
+
+/** Called after every data change (used to save to the PC folder). */
+export function onDataChange(listener: () => void): void {
+  changeListener = listener;
+}
+
+export function notifyChange(): void {
+  changeListener?.();
 }
 
 export async function deletePhoto(id: number): Promise<void> {
@@ -82,11 +109,14 @@ export async function getWall(id: number): Promise<Wall | undefined> {
 
 export async function createWall(wall: Omit<Wall, "id" | "createdAt" | "updatedAt">): Promise<number> {
   const now = new Date();
-  return db.walls.add({ ...wall, createdAt: now, updatedAt: now });
+  const id = await db.walls.add({ ...wall, createdAt: now, updatedAt: now });
+  notifyChange();
+  return id;
 }
 
 export async function updateWall(id: number, changes: Partial<Pick<Wall, "name" | "devices">>): Promise<void> {
   await db.walls.update(id, { ...changes, updatedAt: new Date() });
+  notifyChange();
 }
 
 export async function deleteWall(id: number): Promise<void> {

@@ -27,8 +27,10 @@
 4. Zaměření: z terčů na fotkách spočítat rozměry a zobrazit kóty.
 5. **F05** Skládání zařízení na plochu (2D, HOTOVO): na fotce obkreslit obrys plochy → narovnaný pohled zepředu v mm → vkládat (předvolby + vlastní rozměr) a posouvat zařízení (myš i klávesnice), kóty k okrajům plochy a mezi zařízeními se přepočítávají.
 
+6. **F06** Ukládání do složky na PC (HOTOVO, přání majitele): uživatel si jednou vybere složku (např. `Dokumenty\Měření`), na hlavní stránce zadá **Zakázku** = podsložka. Do ní se ukládají fotky (`0001-název.jpg`), kóty (`0001-název.mereni.json`) a plochy (`plocha-<id>-<název>.json`, rozměry „od levého kraje“ a „střed nad podlahou“). File System Access API jen Chrome/Edge; jinde zůstane IndexedDB (aplikace na to upozorní). Data každého uživatele zůstávají jen na jeho počítači (žádný server).
+
 ### Později
-- **Ukládání do složky na PC** (přání majitele): uživatel si jednou vybere složku (např. `Dokumenty\Měření`) a aplikace do ní ukládá fotky, kóty a plochy jako běžné soubory, každá zakázka do podsložky. Řešení: File System Access API (`showDirectoryPicker`, oprávnění si prohlížeč pamatuje) — jen Chrome/Edge; Firefox/Safari zůstanou u IndexedDB + ruční stažení (ZIP). IndexedDB dál slouží jako rychlá mezipaměť. Aplikace je víceuživatelská, ale data každého uživatele zůstávají jen na jeho počítači (žádný server).
+- Firefox/Safari: ruční stažení zakázky jako ZIP. Načtení zakázky zpět ze složky (např. na jiném PC).
 - Skládání zařízení v prostoru (3D).
 - Přihlášení (napojení na účet platformy „Nástroje elektrotechnika“), AI model, e-mail, mapy, kalendář.
 
@@ -40,7 +42,8 @@
 - Vite 8 + React 19 + TypeScript 7, Tailwind CSS 4, font Barlow (@fontsource, funguje offline), QR přes `qrcode`.
 - Přenos fotek telefon → PC: WebRTC přes PeerJS. PC zobrazí QR s odkazem obsahujícím jednorázové ID spojení; veřejný server PeerJS jen „seznámí“ zařízení, samotné fotky jdou napřímo po Wi-Fi.
 - Zaměření: js-aruco2 (Web Worker) + terče ArUco (tištěné, známá velikost). 2D = homografie z terče v rovině; 3D = více fotek s terči (řešit až po 2D).
-- Ukládání (stav teď): IndexedDB (Dexie) v prohlížeči PC, kde běží stránka → přežije obnovení stránky, ale není to složka na disku a smaže se s daty prohlížeče. Plán: složka na PC (viz Později).
+- Ukládání: IndexedDB (Dexie) v prohlížeči PC = pracovní data; navíc kopie do vybrané složky na PC (F06, File System Access API).
+- Nasazení: GitHub Actions (`.github/workflows/deploy.yml`) při každém push na `main` sestaví a publikuje na GitHub Pages: https://michalm77-adm.github.io/mereni-telefonem/ (veřejný repozitář `michalm77-adm/mereni-telefonem`, rozhodnutí majitele). Ostrá verze používá veřejný PeerJS server.
 - Testy: Playwright (E2E).
 - Ověřuj na internetu nejnovější stabilní verze knihoven před instalací.
 
@@ -68,6 +71,7 @@
 | T04 | Tisk terčů A4 | Vytisknu terč(e) | Každý terč na vlastní A4, černý čtverec 180 mm, kód podle ArUco |
 | T05 | Kóty na fotce | Kliknu 2 body na fotce s terčem | Rozměr v mm (test: chyba < 2 mm na 100 mm i z perspektivy) |
 | T06 | Rozmístění na plochu | Obkreslím plochu, přidám a posunu zařízení | Narovnaná plocha ve správné velikosti, kóty k okrajům a mezi zařízeními sedí, přesah = červeně |
+| T07 | Ukládání do složky | Vyberu složku, zadám zakázku, pošlu fotku, změřím, rozmístím | Ve složce zakázky jsou fotka + .mereni.json + plocha-*.json (test používá OPFS místo okna pro výběr složky) |
 
 Závěrečný checklist před spuštěním:
 - [ ] T01, T02, T03
@@ -129,7 +133,8 @@ mereni-telefonem/
                          # image (kontrola/převod fotek), db (Dexie: fotky v IndexedDB), storage,
                          # markers + aruco-dictionary (geometrie terče, kódy ARUCO_MIP_36h12),
                          # detect (Web Worker), analysis (hodnocení fotky, homografie), homography (výpočet),
-                         # layout (kóty zařízení, přesahy, předvolby zařízení)
+                         # layout (kóty zařízení, přesahy, předvolby zařízení), folder (ukládání do složky na PC)
+.github/workflows/       # deploy.yml – GitHub Pages při push na main
 public/aruco/            # js-aruco2 2.0.0 (MIT, beze změn) + worker.js – rozpoznání terčů ve vlákně
 ```
 
@@ -151,6 +156,7 @@ public/aruco/            # js-aruco2 2.0.0 (MIT, beze změn) + worker.js – roz
 - Rozpoznání: PC po přijetí fotky hledá terč ve Web Workeru (zmenšení na 2400 a pak 1200 px), výsledek (`analysis`) uloží k fotce a pošle telefonu zprávu `photo-quality`. Hodnocení: `ok` / `small` (strana < 120 px) / `skewed` (poměr protilehlých hran < 0,6) / `missing` / `error`. Při změně algoritmu zvyš `ANALYSIS_VERSION` → staré fotky se přepočítají.
 - Měření: homografie z rohů největšího terče na fotce (fotka px → mm na rovině terče). Platí jen pro body ve stejné rovině jako terč. Kóty (`dims`) se ukládají k fotce v px fotky, mm se vždy dopočítají. Víc terčů na jedné fotce zatím nekombinujeme (neznáme jejich vzájemnou polohu).
 - Plochy (Dexie tabulka `walls`, verze DB 2): obrys v mm + homografie uložená přímo u plochy (nezmění se přepočtem fotky) + zařízení (x/y = levý horní roh v mm, y roste dolů). Narovnaná fotka = CSS `matrix3d` z homografie (žádné přepočítávání pixelů), mimo obrys ztlumená. Osy plochy = osy terče → terč věšet rovně (rysky + vodováha). Podlaha = spodní okraj obrysu. Přichytávání 10 mm: vodorovně od levého kraje, svisle od podlahy. Kóty vybraného zařízení: v každém směru k nejbližšímu zařízení v pásu, jinak k obrysu (paprsek ze středu hrany). Smazání fotky plochy zachová (jen bez pozadí).
+- Složka: handle složky v Dexie tabulce `settings` (DB verze 3). Po restartu prohlížeče může Chrome chtít znovu „Povolit zápis“ (musí být kliknutí). Zápis po každé změně se zpožděním 0,8 s; fotka se zapíše jen jednou (`savedAs`), JSONy se přepisují. Smazání v aplikaci soubory ve složce nemaže. E2E hook `window.__E2E_FOLDER__` (jen dev server) = OPFS místo okna pro výběr složky.
 - E2E testy si vyrábí syntetické fotky terče se skutečnou perspektivou (`makeTargetPhoto` v `e2e/helpers.ts`).
 - Bez StrictMode (dvojí připojení by v dev obsadilo stejné PeerJS ID).
 - Když se IP adresa PC ve Wi-Fi změní, uprav `VITE_LAN_URL` v `.env.local`.
