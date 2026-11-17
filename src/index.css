@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy: #1a273d;
+  --color-navy-light: #24354f;
+  --color-navy-dark: #121c2d;
+  --color-volt: #fab60a;
+  --color-mist: #cbd7e6;
+  --font-sans: "Barlow", ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body {
+  background: var(--color-navy);
+  color: #ffffff;
+  min-height: 100%;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-volt);
+  outline-offset: 3px;
+}

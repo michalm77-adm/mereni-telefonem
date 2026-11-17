@@ -1,0 +1,42 @@
+# Fixed project name: same containers and images whatever the folder is called.
+name: mereni-telefonem
+
+services:
+  # Dev server: http://localhost:5173 (phone on the same Wi-Fi: http://<PC IP>:5173)
+  app:
+    build: .
+    ports:
+      - "5173:5173"
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      PEER_SERVER_URL: http://peer:9000
+    volumes:
+      - .:/app
+      - /app/node_modules
+    depends_on:
+      - peer
+
+  # Local PeerJS signalling server (only introduces the devices; photos go phone → PC directly).
+  # Reached through the Vite proxy at /peerjs, so the phone needs only port 5173.
+  peer:
+    image: peerjs/peerjs-server:1.0.2
+    command: ["--port", "9000", "--path", "/peerjs"]
+
+  # E2E tests: `docker compose run --rm e2e` (shares the app's network, so localhost:5173 = app)
+  e2e:
+    profiles: ["test"]
+    image: mereni-e2e:latest
+    build:
+      context: .
+      dockerfile: docker/e2e.Dockerfile
+    network_mode: "service:app"
+    volumes:
+      - ./e2e:/tests/e2e
+      - ./playwright.config.ts:/tests/playwright.config.ts:ro
+      - ./test-results:/tests/test-results
+      - ./playwright-report:/tests/playwright-report
+    depends_on:
+      - app
