@@ -1,5 +1,87 @@
-import type { Device } from "./db";
-import type { Point } from "./homography";
+import type { Device, Level, Wall } from "./db";
+import type { Homography, Point } from "./homography";
+
+/** Rotates a point around the plane origin (y grows downwards, positive angle = clockwise on screen). */
+export function rotatePoint(p: Point, angle: number): Point {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return { x: c * p.x - s * p.y, y: s * p.x + c * p.y };
+}
+
+/** R · H: the same photo mapping followed by a rotation of the wall plane. */
+export function rotateHomography(h: Homography, angle: number): Homography {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return [
+    c * h[0] - s * h[3],
+    c * h[1] - s * h[4],
+    c * h[2] - s * h[5],
+    s * h[0] + c * h[3],
+    s * h[1] + c * h[4],
+    s * h[2] + c * h[5],
+    h[6],
+    h[7],
+    h[8],
+  ];
+}
+
+/** Angle of a line against the horizontal, folded into (−90°, 90°] (direction of drawing does not matter). */
+export function lineAngle(a: Point, b: Point): number {
+  let angle = Math.atan2(b.y - a.y, b.x - a.x);
+  if (angle > Math.PI / 2) angle -= Math.PI;
+  if (angle <= -Math.PI / 2) angle += Math.PI;
+  return angle;
+}
+
+/** Steepest line we still accept as "meant to be horizontal". */
+export const MAX_LEVEL_ANGLE = (30 * Math.PI) / 180;
+
+/**
+ * The floor edge of an outline = the lowest edge that is roughly horizontal (within 30°).
+ * Returns its two points, or null if the outline has no such edge.
+ */
+export function floorEdge(outline: readonly Point[]): [Point, Point] | null {
+  let best: [Point, Point] | null = null;
+  let bestY = -Infinity;
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 1) continue;
+    if (Math.abs(lineAngle(a, b)) > MAX_LEVEL_ANGLE) continue;
+    const y = (a.y + b.y) / 2;
+    if (y > bestY) {
+      bestY = y;
+      best = [a, b];
+    }
+  }
+  return best;
+}
+
+/** Wall geometry with the levelling correction applied (devices are stored in this corrected frame). */
+export function effectiveWall(wall: Pick<Wall, "outline" | "homography" | "level">): { outline: Point[]; homography: Homography; angle: number } {
+  const angle = wall.level?.angle ?? 0;
+  if (angle === 0) return { outline: [...wall.outline], homography: wall.homography, angle };
+  return { outline: wall.outline.map((p) => rotatePoint(p, angle)), homography: rotateHomography(wall.homography, angle), angle };
+}
+
+/** Moves devices along when the correction changes, so they stay on the same spot of the real wall. */
+export function rotateDevices(devices: readonly Device[], delta: number): Device[] {
+  if (delta === 0) return [...devices];
+  return devices.map((d) => {
+    const c = rotatePoint({ x: d.x + d.w / 2, y: d.y + d.h / 2 }, delta);
+    return { ...d, x: Math.round(c.x - d.w / 2), y: Math.round(c.y - d.h / 2) };
+  });
+}
+
+/** Correction angle for a chosen levelling mode; `line` is in the uncorrected wall frame. */
+export function levelFor(mode: Level["mode"], outline: readonly Point[], line?: [Point, Point]): Level | null {
+  if (mode === "target") return { mode, angle: 0 };
+  const ref = mode === "floor" ? floorEdge(outline) : line;
+  if (!ref) return null;
+  const tilt = lineAngle(ref[0], ref[1]);
+  if (Math.abs(tilt) > MAX_LEVEL_ANGLE) return null;
+  return { mode, angle: -tilt, ...(mode === "line" ? { line: ref } : {}) };
+}
 
 export type Box = { minX: number; minY: number; maxX: number; maxY: number };
 

@@ -32,6 +32,12 @@ export type Setting = { key: string; value: unknown };
 /** A device placed on a wall; x/y = top-left corner in mm (wall plane coordinates, y grows downwards). */
 export type Device = { id: string; name: string; x: number; y: number; w: number; h: number };
 
+/**
+ * How the wall is levelled: by the target as it hangs, by the floor edge of the outline, or by a line the user drew
+ * on something horizontal. `angle` (radians) rotates the uncorrected wall plane; `line` is in uncorrected mm.
+ */
+export type Level = { mode: "target" | "floor" | "line"; angle: number; line?: [Point, Point] };
+
 /** A flat surface (wall) outlined on a photo, with devices laid out on it. */
 export type Wall = {
   id: number;
@@ -41,7 +47,10 @@ export type Wall = {
   homography: Homography;
   /** Wall outline in mm, in drawing order. */
   outline: Point[];
+  /** Devices in the levelled frame (see `level`). */
   devices: Device[];
+  /** Missing = the user has not answered the "is the floor level?" question yet. */
+  level?: Level;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -114,7 +123,7 @@ export async function createWall(wall: Omit<Wall, "id" | "createdAt" | "updatedA
   return id;
 }
 
-export async function updateWall(id: number, changes: Partial<Pick<Wall, "name" | "devices">>): Promise<void> {
+export async function updateWall(id: number, changes: Partial<Pick<Wall, "name" | "devices" | "level">>): Promise<void> {
   await db.walls.update(id, { ...changes, updatedAt: new Date() });
   notifyChange();
 }

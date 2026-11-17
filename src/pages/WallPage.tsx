@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Header } from "../components/Header";
-import { deleteWall, getPhoto, getWall, updateWall, type Device, type Wall } from "../lib/db";
+import { deleteWall, getPhoto, getWall, updateWall, type Device, type Level, type Wall } from "../lib/db";
 import type { Point } from "../lib/homography";
-import { bounds, deviceDimensions, deviceProblem, PRESETS, type DimensionLine } from "../lib/layout";
+import {
+  bounds,
+  deviceDimensions,
+  deviceProblem,
+  effectiveWall,
+  levelFor,
+  PRESETS,
+  rotateDevices,
+  rotatePoint,
+  type DimensionLine,
+} from "../lib/layout";
 import { randomId } from "../lib/peer";
 import { formatMm } from "./MeasurePage";
 
@@ -29,6 +39,10 @@ export function WallPage({ wallId }: { wallId: number }) {
   const [toDelete, setToDelete] = useState<Device | "wall" | null>(null);
   const [custom, setCustom] = useState({ name: "", w: "", h: "" });
   const [customError, setCustomError] = useState<string | null>(null);
+  /** Points of the horizontal line being drawn (null = not drawing). */
+  const [levelDraft, setLevelDraft] = useState<Point[] | null>(null);
+  const [levelError, setLevelError] = useState<string | null>(null);
+  const [levelOpen, setLevelOpen] = useState(false);
   const drag = useRef<DragState | null>(null);
   const holderRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -63,17 +77,19 @@ export function WallPage({ wallId }: { wallId: number }) {
   }, [wall]);
 
   const save = useCallback(
-    (changes: Partial<Pick<Wall, "name" | "devices">>) => {
+    (changes: Partial<Pick<Wall, "name" | "devices" | "level">>) => {
       setWall((w) => (w ? { ...w, ...changes } : w));
       void updateWall(wallId, changes);
     },
     [wallId],
   );
 
-  const box = useMemo(() => (wall ? bounds(wall.outline) : null), [wall]);
+  // Levelled geometry: everything on this page (and the devices) lives in this frame.
+  const geo = useMemo(() => (wall ? effectiveWall(wall) : null), [wall]);
+  const box = useMemo(() => (geo ? bounds(geo.outline) : null), [geo]);
 
   if (wall === undefined) return <Shell>Načítám plochu…</Shell>;
-  if (wall === null || !box) {
+  if (wall === null || !box || !geo) {
     return (
       <Shell>
         <span className="text-red-300" role="alert" data-testid="wall-error">
@@ -95,7 +111,7 @@ export function WallPage({ wallId }: { wallId: number }) {
   const toScreen = (p: Point) => ({ x: (p.x - view.x) * scale, y: (p.y - view.y) * scale });
 
   // Photo → screen: (mm → screen) · (photo px → mm), applied to the photo with a CSS 3D matrix.
-  const hm = wall.homography;
+  const hm = geo.homography;
   const g = [
     scale * hm[0] - view.x * scale * hm[6],
     scale * hm[1] - view.x * scale * hm[7],
@@ -108,10 +124,39 @@ export function WallPage({ wallId }: { wallId: number }) {
     hm[8],
   ].map((v, _, arr) => v / arr[8]);
   const matrix = `matrix3d(${g[0]},${g[3]},0,${g[6]},${g[1]},${g[4]},0,${g[7]},0,0,1,0,${g[2]},${g[5]},0,${g[8]})`;
-  const clip = `polygon(${wall.outline.map((p) => `${toScreen(p).x}px ${toScreen(p).y}px`).join(",")})`;
+  const clip = `polygon(${geo.outline.map((p) => `${toScreen(p).x}px ${toScreen(p).y}px`).join(",")})`;
+  const layoutWall = { outline: geo.outline, devices: wall.devices };
 
   const selected = wall.devices.find((d) => d.id === selectedId) ?? null;
-  const dims: DimensionLine[] = selected ? deviceDimensions(selected, wall) : [];
+  const dims: DimensionLine[] = selected ? deviceDimensions(selected, layoutWall) : [];
+
+  /** Applies a levelling choice; devices rotate along so they stay on the same spot of the wall. */
+  const applyLevel = (mode: Level["mode"], line?: [Point, Point]) => {
+    const level = levelFor(mode, wall.outline, line);
+    if (!level) {
+      setLevelError(
+        mode === "floor"
+          ? "Obrys nemá spodní hranu, která by mohla být podlaha. Zakresli vodorovnou čáru."
+          : "Čára je moc šikmá (víc než 30°). Klikni na dva body na něčem vodorovném.",
+      );
+      return;
+    }
+    setLevelError(null);
+    setLevelDraft(null);
+    setLevelOpen(false);
+    save({ level, devices: rotateDevices(wall.devices, level.angle - geo.angle) });
+  };
+
+  /** Click on the wall while drawing the horizontal line (points come in the levelled frame). */
+  const onLineClick = (p: Point) => {
+    if (!levelDraft) return;
+    if (levelDraft.length === 0) return setLevelDraft([p]);
+    if (Math.hypot(p.x - levelDraft[0].x, p.y - levelDraft[0].y) < 10 * u) return;
+    // Back to the uncorrected frame, where the correction angle is defined.
+    applyLevel("line", [rotatePoint(levelDraft[0], -geo.angle), rotatePoint(p, -geo.angle)]);
+  };
+  const levelLine = wall.level?.mode === "line" && wall.level.line ? wall.level.line.map((p) => rotatePoint(p, geo.angle)) : null;
+  const degrees = (geo.angle * 180) / Math.PI;
 
   const setDevices = (devices: Device[]) => save({ devices });
   const patchDevice = (id: string, change: Partial<Device>) => setDevices(wall.devices.map((d) => (d.id === id ? { ...d, ...change } : d)));
@@ -155,6 +200,7 @@ export function WallPage({ wallId }: { wallId: number }) {
   };
 
   const onDevicePointerDown = (e: PointerEvent<SVGGElement>, d: Device) => {
+    if (levelDraft) return; // drawing the horizontal line: the click goes to the wall
     const p = toMm(e);
     if (!p) return;
     e.preventDefault();
@@ -232,6 +278,76 @@ export function WallPage({ wallId }: { wallId: number }) {
       />
       <main className="mx-auto grid max-w-[110rem] gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_22rem]">
         <section className="flex min-w-0 flex-col gap-3" aria-label="Plocha">
+          {!wall.level || levelOpen || levelDraft ? (
+            <div className="rounded-2xl border border-volt/50 bg-volt/10 p-4" data-testid="level-panel" aria-live="polite">
+              {levelDraft ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="font-semibold text-volt" data-testid="level-hint">
+                    {levelDraft.length === 0
+                      ? "Klikni na plose na první bod něčeho vodorovného (laserová čára, spára obkladu, parapet)."
+                      : "Teď klikni na druhý bod – co nejdál od prvního."}
+                  </p>
+                  <button type="button" onClick={() => setLevelDraft(null)} className="rounded-xl border border-white/20 px-4 py-2 font-semibold">
+                    Zrušit
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <p className="text-lg font-bold">Je podlaha (zem) vodorovná?</p>
+                  <p className="mb-3 text-mist">Terč nemusí viset úplně rovně. Podle odpovědi plochu srovnám, aby kóty i výšky seděly.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => applyLevel("floor")} className="rounded-xl bg-volt px-4 py-2 font-bold text-navy">
+                      Ano – srovnat podle podlahy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLevelError(null);
+                        setLevelDraft([]);
+                      }}
+                      className="rounded-xl bg-volt px-4 py-2 font-bold text-navy"
+                    >
+                      Ne – zakreslím vodorovnou čáru
+                    </button>
+                    <button type="button" onClick={() => applyLevel("target")} className="rounded-xl border border-white/20 px-4 py-2 font-semibold">
+                      Terč visí rovně – bez korekce
+                    </button>
+                    {wall.level && (
+                      <button type="button" onClick={() => setLevelOpen(false)} className="rounded-xl px-4 py-2 font-semibold text-mist">
+                        Nechat jak je
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+              {levelError && (
+                <p className="mt-2 text-red-300" role="alert">
+                  {levelError}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3 text-mist" data-testid="level-status" data-mode={wall.level.mode} data-angle={degrees.toFixed(2)}>
+              <span>
+                Vodorovnost:{" "}
+                <strong className="text-white">
+                  {wall.level.mode === "floor" ? "podle podlahy" : wall.level.mode === "line" ? "podle zakreslené čáry" : "podle terče"}
+                </strong>
+                {wall.level.mode !== "target" && `, korekce ${degrees.toLocaleString("cs-CZ", { maximumFractionDigits: 1, minimumFractionDigits: 1 })}°`}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setLevelOpen(true);
+                  setLevelError(null);
+                }}
+                className="rounded-xl border border-white/20 px-3 py-1 font-semibold text-white"
+              >
+                Změnit
+              </button>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-4">
             <h2 className="text-2xl font-bold tracking-wide">{wall.name}</h2>
             <p className="font-semibold text-mist" data-testid="wall-size" data-w={wallW.toFixed(1)} data-h={wallH.toFixed(1)}>
@@ -280,6 +396,11 @@ export function WallPage({ wallId }: { wallId: number }) {
                 onPointerUp={onPointerUp}
                 onPointerCancel={onPointerUp}
                 onPointerDown={(e) => {
+                  if (levelDraft) {
+                    const p = toMm(e);
+                    if (p) onLineClick(p);
+                    return;
+                  }
                   if (e.target === e.currentTarget) setSelectedId(null);
                 }}
                 data-testid="wall-svg"
@@ -287,14 +408,14 @@ export function WallPage({ wallId }: { wallId: number }) {
                 data-view-x={view.x}
                 data-view-y={view.y}
               >
-                <polygon points={wall.outline.map((p) => `${p.x},${p.y}`).join(" ")} fill={photoUrl ? "none" : "rgb(203 215 230 / 0.08)"} stroke="#fab60a" strokeWidth={2.5 * u} />
+                <polygon points={geo.outline.map((p) => `${p.x},${p.y}`).join(" ")} fill={photoUrl ? "none" : "rgb(203 215 230 / 0.08)"} stroke="#fab60a" strokeWidth={2.5 * u} />
 
                 {/* Overall size of the wall */}
                 <DimLine from={{ x: box.minX, y: box.minY - 28 * u }} to={{ x: box.maxX, y: box.minY - 28 * u }} mm={wallW} u={u} color="#cbd7e6" />
                 <DimLine from={{ x: box.minX - 28 * u, y: box.maxY }} to={{ x: box.minX - 28 * u, y: box.minY }} mm={wallH} u={u} color="#cbd7e6" />
 
                 {wall.devices.map((d) => {
-                  const problem = deviceProblem(d, wall);
+                  const problem = deviceProblem(d, layoutWall);
                   const isSel = d.id === selectedId;
                   return (
                     <g
@@ -338,6 +459,24 @@ export function WallPage({ wallId }: { wallId: number }) {
 
                 {dims.map((dim) => (
                   <DimLine key={dim.side} from={dim.from} to={dim.to} mm={dim.mm} u={u} color={dim.to_ === "device" ? "#7dd3fc" : "#ffffff"} side={dim.side} />
+                ))}
+
+                {/* Horizontal reference line the wall was levelled by */}
+                {levelLine && !levelDraft && (
+                  <line
+                    x1={levelLine[0].x}
+                    y1={levelLine[0].y}
+                    x2={levelLine[1].x}
+                    y2={levelLine[1].y}
+                    stroke="#34d399"
+                    strokeWidth={2 * u}
+                    strokeDasharray={`${10 * u} ${6 * u}`}
+                    pointerEvents="none"
+                    data-testid="level-line"
+                  />
+                )}
+                {levelDraft?.map((p, i) => (
+                  <circle key={i} cx={p.x} cy={p.y} r={6 * u} fill="#34d399" stroke="#121c2d" strokeWidth={1.5 * u} pointerEvents="none" />
                 ))}
               </svg>
             </div>
@@ -449,7 +588,7 @@ export function WallPage({ wallId }: { wallId: number }) {
                       <span className="font-semibold">{d.name}</span>
                       <span className="text-sm">
                         {d.w} × {d.h}
-                        {deviceProblem(d, wall) && " ⚠"}
+                        {deviceProblem(d, layoutWall) && " ⚠"}
                       </span>
                     </button>
                   </li>

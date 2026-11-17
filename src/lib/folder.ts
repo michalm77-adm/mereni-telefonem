@@ -1,7 +1,7 @@
 import { db, type StoredPhoto, type Wall } from "./db";
 import { planeHomography } from "./analysis";
 import { applyHomography, distance } from "./homography";
-import { bounds } from "./layout";
+import { bounds, effectiveWall } from "./layout";
 
 /**
  * Saving to a folder on the PC (File System Access API, Chrome/Edge only).
@@ -159,14 +159,16 @@ function photoJson(photo: StoredPhoto) {
 }
 
 function wallJson(wall: Wall, photo: StoredPhoto | undefined) {
-  const box = bounds(wall.outline);
+  const geo = effectiveWall(wall);
+  const box = bounds(geo.outline);
   return {
     app: "2M elektro – Měření telefonem",
     format: 1,
     name: wall.name,
     photo: photo ? photoFileName(photo) : null,
     size_mm: { width: round1(box.maxX - box.minX), height: round1(box.maxY - box.minY) },
-    outline_mm: wall.outline.map((p) => ({ x: round1(p.x - box.minX), y: round1(box.maxY - p.y) })),
+    level: wall.level ? { by: wall.level.mode, correction_deg: round1((wall.level.angle * 180) / Math.PI) } : null,
+    outline_mm: geo.outline.map((p) => ({ x: round1(p.x - box.minX), y: round1(box.maxY - p.y) })),
     devices: wall.devices.map((d) => ({
       name: d.name,
       width_mm: d.w,
@@ -174,7 +176,7 @@ function wallJson(wall: Wall, photo: StoredPhoto | undefined) {
       from_left_mm: round1(d.x - box.minX),
       centre_above_floor_mm: round1(box.maxY - (d.y + d.h / 2)),
     })),
-    homography: wall.homography,
+    homography: geo.homography,
   };
 }
 
